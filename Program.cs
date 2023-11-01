@@ -6,6 +6,8 @@ using DotNetEnv;
 using Newtonsoft.Json;
 using System.IO;
 using System.Text;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace S3Uploader
 {
@@ -30,36 +32,32 @@ namespace S3Uploader
             }
             var region = GetRegionFromEnv();
 
-            var data = new
-            {
-                latest = "1.2.0",
-                versions = new Dictionary<string, string>
-                {
-                    {"1.0.0", "/apks/test-1.0.0.apk"},
-                    {"1.0.1", "/apks/test-1.0.1.apk"},
-                    {"1.1.0", "/apks/test-1.1.0.apk"},
-                    {"1.1.1", "/apks/test-1.1.1.apk"},
-                    {"1.2.0", "/apks/test-1.2.0.apk"},
-                },
-                changelog = new Dictionary<string, string>
-                {
-                    {"1.0.0", "Initial release"},
-                    {"1.0.1", "Bug fixes"},
-                    {"1.1.0", "Added new features"},
-                    {"1.1.1", "Performance improvements"},
-                    {"1.2.0", "Updated UI and fixed some issues"},
-                }
-            };
-
             using (var s3Client = new AmazonS3Client(accessKey, secretKey, region))
             {
-                UploadFile(s3Client, bucketName,
-                    () => File.OpenRead("test-file.txt"),
-                    $"apks/test-{data.latest}.apk");
-                UploadFile(s3Client, bucketName,
-                    () => new MemoryStream(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(data, Formatting.Indented))),
-                    "version-test.json",
-                    "application/json");
+                // Fetch existing version.json
+                var getObjectRequest = new GetObjectRequest
+                {
+                    BucketName = bucketName,
+                    Key = "version.json"
+                };
+                var getObjectResponse = s3Client.GetObjectAsync(getObjectRequest).Result;
+                using (var reader = new StreamReader(getObjectResponse.ResponseStream))
+                {
+                    var content = reader.ReadToEnd();
+                    var versionData = JsonConvert.DeserializeObject<VersionData>(content);
+
+                    versionData.latest = "1.3.0";
+                    versionData.versions["1.3.0"] = $"/apks/test-1.3.0.apk";
+                    versionData.changelog["1.3.0"] = "The changelog for 1.3.0";
+
+                    UploadFile(s3Client, bucketName,
+                        () => File.OpenRead("test-file.txt"),
+                        $"apks/test-{versionData.latest}.apk");
+                    UploadFile(s3Client, bucketName,
+                            () => new MemoryStream(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(versionData, Formatting.Indented))),
+                            "version-test.json",
+                            "application/json");
+                }
             }
         }
 
@@ -94,6 +92,13 @@ namespace S3Uploader
             {
                 Console.WriteLine($"Unknown encountered on server. Message:'{e.Message}' when writing an object");
             }
+        }
+
+        public class VersionData
+        {
+            public string latest { get; set; } = string.Empty;
+            public Dictionary<string, string> versions { get; set; } = new Dictionary<string, string>();
+            public Dictionary<string, string> changelog { get; set; } = new Dictionary<string, string>();
         }
     }
 }
